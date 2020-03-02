@@ -11,6 +11,7 @@ Particle_beam::Particle_beam() : min_position(), max_position(), particle_beam_s
 Particle_beam::Particle_beam(vec2 min, vec2 max, Sprite* particle_beam_sprite, int damage) : particle_beam_sprite(particle_beam_sprite), sprite_frame(0), damage(damage)
 {
     min_position = min;
+    //max is always 100x50 (see game.cpp)
     max_position = min + max;
 
     rectangle = Rectangle2D(min_position, max_position);

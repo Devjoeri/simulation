@@ -25,7 +25,6 @@
 static timer perf_timer;
 static float duration;
 
-
 #pragma endregion
 
 #pragma region Load sprite files and initialize sprites
@@ -63,7 +62,8 @@ Game::~Game()
 // -----------------------------------------------------------
 // Initialize the application
 // -----------------------------------------------------------
-void Game::Init(){
+void Game::Init()
+{
     //initialize grid
     tanks.reserve(NUM_TANKS_BLUE + NUM_TANKS_RED);
     m_grid = std::make_unique<Grid>(SCRWIDTH, SCRHEIGHT, CELL_SIZE);
@@ -86,11 +86,13 @@ void Game::Init(){
 #pragma endregion
 
     //Spawn blue tanks
-    for (int i = 0; i < NUM_TANKS_BLUE; i++){
+    for (int i = 0; i < NUM_TANKS_BLUE; i++)
+    {
         tanks.emplace_back(Tank(start_blue_x + ((i % max_rows) * spacing), start_blue_y + ((i / max_rows) * spacing), BLUE, &tank_blue, &smoke, 1200, 600, tank_radius, TANK_MAX_HEALTH, TANK_MAX_SPEED, i));
     }
     //Spawn red tanks
-    for (int i = 0; i < NUM_TANKS_RED; i++){
+    for (int i = 0; i < NUM_TANKS_RED; i++)
+    {
         tanks.emplace_back(Tank(start_red_x + ((i % max_rows) * spacing), start_red_y + ((i / max_rows) * spacing), RED, &tank_red, &smoke, 80, 80, tank_radius, TANK_MAX_HEALTH, TANK_MAX_SPEED, i));
     }
 
@@ -98,7 +100,8 @@ void Game::Init(){
     particle_beams.emplace_back(Particle_beam(vec2(80, 80), vec2(100, 50), &particle_beam_sprite, PARTICLE_BEAM_HIT_VALUE));
     particle_beams.emplace_back(Particle_beam(vec2(1200, 600), vec2(100, 50), &particle_beam_sprite, PARTICLE_BEAM_HIT_VALUE));
 
-    for (auto& tank : tanks){
+    for (auto& tank : tanks)
+    {
         m_grid->AddTank(&tank);
         tank.allignment == BLUE ? Bluetanks.emplace_back(&tank) : Redtanks.emplace_back(&tank);
     }
@@ -117,23 +120,45 @@ void Game::Shutdown()
 Tank& Game::FindClosestEnemy(Tank& current_tank)
 {
     float closest_distance = numeric_limits<float>::infinity();
-    int closest_index = 0;
+    int closest_index = NULL;
     vector<Tank*> TankVector = current_tank.ownerCell->tanks;
-    
-    for (int16_t i = 0; i < TankVector.capacity(); i++){
-        if (TankVector.at(i)->allignment != current_tank.allignment && TankVector.at(i)->active){
+
+    for (int16_t i = 0; i < TankVector.capacity(); i++)
+    {
+        if (TankVector.at(i)->allignment != current_tank.allignment && TankVector.at(i)->active)
+        {
             float sqrDist = fabsf((TankVector.at(i)->Get_Position() - current_tank.Get_Position()).sqrLength());
-            if (sqrDist < closest_distance){
+            if (sqrDist < closest_distance)
+            {
                 closest_distance = sqrDist;
                 closest_index = i;
             }
         }
     }
 
-    if (TankVector.at(closest_index) != nullptr){ //Catch off the nullptr, so we're not dereffing a nullptr.
+    //check if there are  none enemy tanks in ownercell of tank
+    //if there are none, do basic find_closest_enemy algorithm
+    if (closest_index == NULL)
+    {
+        for (int16_t i = 0; i < tanks.capacity(); i++)
+        {
+            if (tanks.at(i).allignment != current_tank.allignment && tanks.at(i).active)
+            {
+                float sqrDist = fabsf((tanks.at(i).Get_Position() - current_tank.Get_Position()).sqrLength());
+                if (sqrDist < closest_distance)
+                {
+                    closest_distance = sqrDist;
+                    closest_index = i;
+                }
+            }
+        }
+        return tanks.at(closest_index);
+    }
+    //if there are enemies in tanks owner cell, return closest enemy from cell
+    else
+    {
         return TankVector.at(closest_index)->allignment == BLUE ? *Bluetanks.at(TankVector.at(closest_index)->VectorOffset) : *Redtanks.at(TankVector.at(closest_index)->VectorOffset);
     }
-    return tanks.at(TankVector.at(0)->VectorOffset);
 }
 
 // -----------------------------------------------------------
@@ -146,9 +171,10 @@ Tank& Game::FindClosestEnemy(Tank& current_tank)
 void Game::Update(float deltaTime)
 {
     //Update tanks
-    tPool->enqueue([&] {
+    future<void> tankFuture = tPool->enqueue([&] {
         UpdateGameTanks();
     });
+    tankFuture.wait();
 
     //Update smoke plumes
     for (Smoke& smoke : smokes)
@@ -157,16 +183,20 @@ void Game::Update(float deltaTime)
     }
 
     //Update rockets
-    tPool->enqueue([&]{
-        UpdateGameRockets(); 
+    future<void> rocketFuture = tPool->enqueue([&] {
+        UpdateGameRockets();
     });
+    rocketFuture.wait();
+
     //Remove exploded rockets with remove erase idiom
     rockets.erase(std::remove_if(rockets.begin(), rockets.end(), [](const Rocket& rocket) { return !rocket.active; }), rockets.end());
 
-    tPool->enqueue([&]{
-        // Alas, check the laserbeams
-        UpdateGameLaserBeams();
+    //update laserbeams
+    future<void> beamFuture = tPool->enqueue([&] {
+      // Alas, check the laserbeams
+      UpdateGameLaserBeams();
     });
+    beamFuture.wait();
 
     //Update explosion sprites and remove when done with remove erase idiom
     for (Explosion& explosion : explosions)
@@ -174,61 +204,79 @@ void Game::Update(float deltaTime)
         explosion.Tick();
     }
     explosions.erase(std::remove_if(explosions.begin(), explosions.end(), [](const Explosion& explosion) { return explosion.done(); }), explosions.end());
-    
 }
 
-void Game::UpdateGameTanks(){
-    for (Tank& Ortank : tanks){
+void Game::UpdateGameTanks()
+{
+    for (Tank& Ortank : tanks)
+    {
         if (!Ortank.active) continue;
-        if (Ortank.position.x < -5 || Ortank.position.y < -5 || Ortank.position.x > SCRWIDTH + 5 || Ortank.position.y > SCRHEIGHT + 5){
+        //deactivate tank when out of border
+        if (Ortank.position.x < -15 || Ortank.position.y < -15 || Ortank.position.x > SCRWIDTH + 15 || Ortank.position.y > SCRHEIGHT + 15)
+        {
             Ortank.Deactivate();
             continue;
         }
 
-        //Check for collision and nudge
-        for (Tank* tank : Ortank.ownerCell->tanks){
+        vector<Cell*> cells = m_grid->GetNeighbours(&Ortank);
+        vector<Tank*> neighbours;
+        for (Cell* cell : cells)
+        {
+            if (!cell->tanks.empty()) {
+                for (Tank* tank : cell->tanks) {
+                    neighbours.push_back(tank);
+                }
+            }            
+        }
+
+        //Check for collision with tanks (from neighbour cells) and nudge
+        for (Tank* tank : neighbours /*Ortank.ownerCell->tanks*/)
+        {
             if (&Ortank == tank) continue;
             vec2 Direction = Ortank.Get_Position() - tank->Get_Position();
             float ColSquaredLenght = (Ortank.Get_collision_radius() * Ortank.Get_collision_radius() + (tank->Get_collision_radius() * tank->Get_collision_radius()));
-            if (Direction.sqrLength() < ColSquaredLenght){
+            if (Direction.sqrLength() < ColSquaredLenght)
+            {
                 Ortank.Push(Direction.normalized(), 1.f);
             }
         }
 
         Ortank.Tick();
 
-        // Blast closest target with a rocket out of its ass
+        // if reloaded, shoot at closest enemy
         if (!Ortank.reloaded) continue;
-            Tank& target = FindClosestEnemy(Ortank);
-        
-        if (target.allignment != Ortank.allignment){
+        Tank& target = FindClosestEnemy(Ortank);
+
+        if (target.allignment != Ortank.allignment)
+        {
             rockets.emplace_back(Rocket(Ortank.position, (target.Get_Position() - Ortank.position).normalized() * 3,
                                         rocket_radius, Ortank.allignment, ((Ortank.allignment == RED) ? &rocket_red : &rocket_blue)));
             Ortank.Reload_Rocket();
         }
-        
 
         // Check if tank needs to swap Nodes
         if (m_grid->GetCell(Ortank.position) == Ortank.ownerCell) continue;
         m_grid->SwitchCells(&Ortank, m_grid->GetCell(Ortank.position));
-
-        
     }
 }
 
-void Game::UpdateGameRockets(){
-    for (Rocket& rocket : rockets){
+void Game::UpdateGameRockets()
+{
+    for (Rocket& rocket : rockets)
+    {
         rocket.Tick(); //Tick tock
 
-        // Check if rocket reached border
-        if (rocket.position.x < -10 || rocket.position.y < -10 || rocket.position.x > SCRWIDTH + 10 || rocket.position.y > SCRHEIGHT + 10){
+        //deactivate rockets when out of border
+        if (rocket.position.x < -10 || rocket.position.y < -10 || rocket.position.x > SCRWIDTH + 10 || rocket.position.y > SCRHEIGHT + 10)
+        {
             rocket.active = false;
             continue;
         }
 
         //Check for collision
         Cell* cell = m_grid->GetCell(rocket.position);
-        for (Tank* tank : cell->tanks){
+        for (Tank* tank : cell->tanks)
+        {
             if (!tank->active || tank->allignment == rocket.allignment || !rocket.active || !rocket.Intersects(tank->position, tank->collision_radius)) continue;
             explosions.emplace_back(Explosion(&explosion, tank->position));
             if (tank->hit(ROCKET_HIT_VALUE))
@@ -240,8 +288,10 @@ void Game::UpdateGameRockets(){
     }
 }
 
-void Game::UpdateGameLaserBeams(){
-    for (Particle_beam particle_beam : particle_beams){
+void Game::UpdateGameLaserBeams()
+{
+    for (Particle_beam particle_beam : particle_beams)
+    {
         particle_beam.tick(tanks);
         vector<Cell*> CellVector = m_grid->GetCells(&particle_beam);
         vector<Tank*> TankVector;
@@ -266,8 +316,6 @@ void Game::UpdateGameLaserBeams(){
         }
     }
 }
-
-
 
 void Game::Draw()
 {
@@ -316,7 +364,7 @@ void Game::Draw()
         const UINT16 begin = ((t < 1) ? 0 : NUM_TANKS_BLUE);
         std::vector<const Tank*> sorted_tanks;
         insertion_sort_tanks_health(tanks, sorted_tanks, begin, begin + NUM_TANKS);
-       
+
         for (int i = 0; i < NUM_TANKS; i++)
         {
             int health_bar_start_x = i * (HEALTH_BAR_WIDTH + HEALTH_BAR_SPACING) + HEALTH_BARS_OFFSET_X;
@@ -370,7 +418,6 @@ void Tmpl8::Game::insertion_sort_tanks_health(const std::vector<Tank>& original,
     const UINT16 NUM_TANKS = end - begin;
     sorted_tanks.reserve(NUM_TANKS);
     sorted_tanks.emplace_back(&original.at(begin));
-
 
     for (int i = begin + 1; i < (begin + NUM_TANKS); i++)
     {
@@ -431,7 +478,8 @@ void Tmpl8::Game::MeasurePerformance()
 // -----------------------------------------------------------
 void Game::Tick(float deltaTime)
 {
-    if (!lock_update){
+    if (!lock_update)
+    {
         Update(deltaTime);
     }
     Draw();

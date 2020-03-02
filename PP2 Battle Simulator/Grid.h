@@ -6,7 +6,7 @@ class Cell
 {
   public:
     std::vector<Tank*> tanks;
-} S;
+};
 
 class Grid
 {
@@ -26,7 +26,8 @@ class Grid
     void RemoveTank(Tank* tank);
 	//gets cells from particle_beam
     vector<Cell*> GetCells(Particle_beam* beam);
-
+    //get neighbourcells
+    vector<Cell*> GetNeighbours(Tank* tank);
     // Remove and add in one function
     void SwitchCells(Tank* tank, Cell* cell);
 
