@@ -25,6 +25,10 @@
 static timer perf_timer;
 static float duration;
 
+unsigned int threadCount = std::thread::hardware_concurrency();
+//int start = 0;
+//int finish = (NUM_TANKS_BLUE + NUM_TANKS_RED) / threadCount;
+
 #pragma endregion
 
 #pragma region Load sprite files and initialize sprites
@@ -66,7 +70,7 @@ void Game::Init()
 {
     //initialize grid
     tanks.reserve(NUM_TANKS_BLUE + NUM_TANKS_RED);
-    m_grid = std::make_unique<Grid>(SCRWIDTH, SCRHEIGHT, CELL_SIZE);
+    m_grid = std::make_unique<Grid>(2000, 2000, CELL_SIZE);
     tPool = std::make_unique<ThreadPool>(std::thread::hardware_concurrency() * 2 + 2);
 
     frame_count_font = new Font("assets/digital_small.png", "ABCDEFGHIJKLMNOPQRSTUVWXYZ:?!=-0123456789.");
@@ -171,11 +175,10 @@ Tank& Game::FindClosestEnemy(Tank& current_tank)
 void Game::Update(float deltaTime)
 {
     //Update tanks
-    future<void> tankFuture = tPool->enqueue([&] {
-        UpdateGameTanks();
-    });
-    tankFuture.wait();
 
+    UpdateGameTanks();
+
+    //tankFuture.wait();
     //Update smoke plumes
     for (Smoke& smoke : smokes)
     {
@@ -193,8 +196,8 @@ void Game::Update(float deltaTime)
 
     //update laserbeams
     future<void> beamFuture = tPool->enqueue([&] {
-      // Alas, check the laserbeams
-      UpdateGameLaserBeams();
+        // Alas, check the laserbeams
+        UpdateGameLaserBeams();
     });
     beamFuture.wait();
 
@@ -206,57 +209,65 @@ void Game::Update(float deltaTime)
     explosions.erase(std::remove_if(explosions.begin(), explosions.end(), [](const Explosion& explosion) { return explosion.done(); }), explosions.end());
 }
 
+//update tanks
 void Game::UpdateGameTanks()
 {
-    for (Tank& Ortank : tanks)
+    future<void> fut;
+    future<void> fut1;
+    for (int i = 0; i < threadCount; i++)
     {
-        if (!Ortank.active) continue;
-        //deactivate tank when out of border
-        if (Ortank.position.x < -15 || Ortank.position.y < -15 || Ortank.position.x > SCRWIDTH + 15 || Ortank.position.y > SCRHEIGHT + 15)
-        {
-            Ortank.Deactivate();
-            continue;
-        }
+        //get start and end of indexes this thread has to update from list of tanks
+        int start = (tanks.capacity() / threadCount) * i;
+        int end = (tanks.capacity() / threadCount) * (i+1);
 
-        vector<Cell*> cells = m_grid->GetNeighbours(&Ortank);
-        vector<Tank*> neighbours;
-        for (Cell* cell : cells)
-        {
-            if (!cell->tanks.empty()) {
-                for (Tank* tank : cell->tanks) {
-                    neighbours.push_back(tank);
-                }
-            }            
-        }
-
-        //Check for collision with tanks (from neighbour cells) and nudge
-        for (Tank* tank : neighbours /*Ortank.ownerCell->tanks*/)
-        {
-            if (&Ortank == tank) continue;
-            vec2 Direction = Ortank.Get_Position() - tank->Get_Position();
-            float ColSquaredLenght = (Ortank.Get_collision_radius() * Ortank.Get_collision_radius() + (tank->Get_collision_radius() * tank->Get_collision_radius()));
-            if (Direction.sqrLength() < ColSquaredLenght)
+        fut = tPool->enqueue([&, i] {
+            for (int x = start; x < end; x++)
             {
-                Ortank.Push(Direction.normalized(), 1.f);
+                if (!tanks.at(x).active) continue;                
+                //Check for collision and nudge
+                for (Tank* tank : tanks.at(x).ownerCell->tanks)
+                {
+                    if (&tanks.at(x) == tank) continue;
+                    vec2 Direction = tanks.at(x).Get_Position() - tank->Get_Position();
+                    float ColSquaredLenght = (tanks.at(x).Get_collision_radius() * tanks.at(x).Get_collision_radius() + (tank->Get_collision_radius() * tank->Get_collision_radius()));
+                    if (Direction.sqrLength() < ColSquaredLenght)
+                    {
+                        tanks.at(x).Push(Direction.normalized(), 1.f);
+                    }
+                }
+            }
+        });
+        fut.wait();
+
+        for (int x = start; x < end; x++)
+        {
+            if (tanks.at(x).active)
+            {
+                tanks.at(x).Tick();
             }
         }
 
-        Ortank.Tick();
+        fut1 = tPool->enqueue([&, i] {
+            //start thread
+            for (int x = start; x < end; x++)
+            {
+                // Blast closest target with a rocket out of its ass
+                if (!tanks.at(x).reloaded) continue;
+                Tank& target = FindClosestEnemy(tanks.at(x));
 
-        // if reloaded, shoot at closest enemy
-        if (!Ortank.reloaded) continue;
-        Tank& target = FindClosestEnemy(Ortank);
-
-        if (target.allignment != Ortank.allignment)
-        {
-            rockets.emplace_back(Rocket(Ortank.position, (target.Get_Position() - Ortank.position).normalized() * 3,
-                                        rocket_radius, Ortank.allignment, ((Ortank.allignment == RED) ? &rocket_red : &rocket_blue)));
-            Ortank.Reload_Rocket();
-        }
-
-        // Check if tank needs to swap Nodes
-        if (m_grid->GetCell(Ortank.position) == Ortank.ownerCell) continue;
-        m_grid->SwitchCells(&Ortank, m_grid->GetCell(Ortank.position));
+                if (target.allignment != tanks.at(x).allignment)
+                {
+                    rockets.emplace_back(Rocket(tanks.at(x).position, (target.Get_Position() - tanks.at(x).position).normalized() * 3,
+                                                rocket_radius, tanks.at(x).allignment, ((tanks.at(x).allignment == RED) ? &rocket_red : &rocket_blue)));
+                    tanks.at(x).Reload_Rocket();
+                }
+                //stop thread
+                // Check if tank needs to swap Nodes
+                if (m_grid->GetCell(tanks.at(x).position) == tanks.at(x).ownerCell) continue;
+                m_grid->SwitchCells(&tanks.at(x), m_grid->GetCell(tanks.at(x).position));
+            }
+        });
+        fut1.wait();
     }
 }
 
@@ -363,8 +374,7 @@ void Game::Draw()
 
         const UINT16 begin = ((t < 1) ? 0 : NUM_TANKS_BLUE);
         std::vector<const Tank*> sorted_tanks;
-        insertion_sort_tanks_health(tanks, sorted_tanks, begin, begin + NUM_TANKS);
-
+        vector<int> sortedTanks = countSort(tanks);
         for (int i = 0; i < NUM_TANKS; i++)
         {
             int health_bar_start_x = i * (HEALTH_BAR_WIDTH + HEALTH_BAR_SPACING) + HEALTH_BARS_OFFSET_X;
@@ -373,41 +383,31 @@ void Game::Draw()
             int health_bar_end_y = (t < 1) ? HEALTH_BAR_HEIGHT : SCRHEIGHT - 1;
 
             screen->Bar(health_bar_start_x, health_bar_start_y, health_bar_end_x, health_bar_end_y, REDMASK);
-            screen->Bar(health_bar_start_x, health_bar_start_y + (int)((double)HEALTH_BAR_HEIGHT * (1 - ((double)sorted_tanks.at(i)->health / (double)TANK_MAX_HEALTH))), health_bar_end_x, health_bar_end_y, GREENMASK);
+            screen->Bar(health_bar_start_x, health_bar_start_y + (int)((double)HEALTH_BAR_HEIGHT * (1 - ((double)sortedTanks.at(i) / (double)TANK_MAX_HEALTH))), health_bar_end_x, health_bar_end_y, GREENMASK);            
         }
     }
 }
 
-// -----------------------------------------------------------
-// Sort tanks by health value using bucket sort
-// -----------------------------------------------------------
-void Tmpl8::Game::bucket_sort_tanks_health(const std::vector<Tank>& original, std::vector<const Tank*>& sorted_tanks, UINT16 begin, UINT16 end)
+vector<int> Game::countSort(const vector<Tank>& toSort)
 {
-    const UINT16 NUM_TANKS = end - begin;
-    sorted_tanks.reserve(NUM_TANKS);
-    sorted_tanks.emplace_back(&original.at(begin));
+    vector<int> tanksSorted;
+    vector<int> Counters(TANK_MAX_HEALTH + 1, 0);
 
-    for (int i = begin + 1; i < (begin + NUM_TANKS); i++)
+    for (auto t : toSort)
     {
-        const Tank& current_tank = original.at(i);
-
-        for (int s = (int)sorted_tanks.size() - 1; s >= 0; s--)
+        Counters.at(t.health <= 0 ? 0 : t.health)++;
+    }
+    for (int i = 0; i <= TANK_MAX_HEALTH; ++i)
+    {
+        if (Counters[i] != 0)
         {
-            const Tank* current_checking_tank = sorted_tanks.at(s);
-
-            if ((current_checking_tank->CompareHealth(current_tank) <= 0))
+            for (int o = 0; o < Counters[i]; ++o)
             {
-                sorted_tanks.insert(1 + sorted_tanks.begin() + s, &current_tank);
-                break;
-            }
-
-            if (s == 0)
-            {
-                sorted_tanks.insert(sorted_tanks.begin(), &current_tank);
-                break;
+                tanksSorted.emplace_back(i);
             }
         }
     }
+    return tanksSorted;
 }
 
 // -----------------------------------------------------------

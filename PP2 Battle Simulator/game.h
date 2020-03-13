@@ -23,7 +23,7 @@ class Game
     void Draw();
     void Tick(float deltaTime);
     void insertion_sort_tanks_health(const std::vector<Tank>& original, std::vector<const Tank*>& sorted_tanks, UINT16 begin, UINT16 end);
-    void bucket_sort_tanks_health(const std::vector<Tank>& original, std::vector<const Tank*>& sorted_tanks, UINT16 begin, UINT16 end);
+    vector<int> countSort(const std::vector<Tank>& toSort);
     void MeasurePerformance();
 
     void UpdateGameTanks();

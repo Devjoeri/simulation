@@ -2,6 +2,8 @@
 #pragma once
 #include "Grid.h"
 
+std::mutex mut;
+
 Grid::Grid(int width, int height, int cellSize) : m_width(width),
                                                   m_height(height),
                                                   m_cellSize(cellSize)
@@ -18,8 +20,10 @@ Grid::~Grid()
 //add tank to list of tanks from cell, where cell is unknown
 void Grid::AddTank(Tank* tank)
 {
+    std::lock_guard<std::mutex> lock(mut);
     Cell* cell = GetCell(tank->position);
-    if (cell != nullptr){
+    if (cell != nullptr)
+    {
         cell->tanks.push_back(tank);
         tank->ownerCell = cell;
         tank->cellIndex = cell->tanks.size() - 1;
@@ -27,14 +31,16 @@ void Grid::AddTank(Tank* tank)
 }
 
 //add tank to list of tanks from cell, where cell is known
-void Grid::AddTank(Tank* tank, Cell* cell){
+void Grid::AddTank(Tank* tank, Cell* cell)
+{
     cell->tanks.push_back(tank);
     tank->ownerCell = cell;
     tank->cellIndex = cell->tanks.size() - 1;
 }
 
 //gets cell using x and y coordinates
-Cell* Grid::GetCell(int x, int y){
+Cell* Grid::GetCell(int x, int y)
+{
     if (x < 0) x = 0;
     if (x >= numXcells) x = numXcells;
     if (y < 0) y = 0;
@@ -52,7 +58,8 @@ Cell* Grid::GetCell(const vec2& pos)
 }
 
 //gets ownercell and neighbour cells of tank
-vector<Cell*> Grid::GetNeighbours(Tank* tank) {
+vector<Cell*> Grid::GetNeighbours(Tank* tank)
+{
     vector<Cell*> cells;
 
     //set x and y
@@ -103,12 +110,13 @@ vector<Cell*> Grid::GetNeighbours(Tank* tank) {
 
 //gets cells of particle_beam
 //as each beam has an area of 100x50(see particle_beam.cpp), 3 cells are always enough(cell_size = 80)
-vector<Cell*> Grid::GetCells(Particle_beam* beam){
+vector<Cell*> Grid::GetCells(Particle_beam* beam)
+{
     vector<Cell*> cells;
     //get cell of beams min position
     int minx = (int)(beam->min_position.x / m_cellSize);
     int miny = (int)(beam->min_position.y / m_cellSize);
-    
+
     //get cell of beams middle position
     int midx = (int)((beam->min_position.x + CELL_SIZE) / m_cellSize);
     int midy = (int)(beam->min_position.y / m_cellSize);
@@ -141,7 +149,9 @@ void Grid::RemoveTank(Tank* tank)
 }
 
 //used when tank crosses a cell border, removed from old cell and added in new cell
-void Grid::SwitchCells(Tank* tank, Cell* cell){
+void Grid::SwitchCells(Tank* tank, Cell* cell)
+{
+    std::lock_guard<std::mutex> lock(mut);
     RemoveTank(tank);
     AddTank(tank, cell);
 }
